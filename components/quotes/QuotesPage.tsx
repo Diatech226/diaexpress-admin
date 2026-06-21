@@ -11,7 +11,7 @@ import { QuotesTable } from './QuotesTable';
 import { useToast } from '@/components/ui/toast';
 import { useQuotes } from '@/hooks/useQuotes';
 import { ApiError, buildQueryString } from '@/lib/api/client';
-import { confirmQuote, convertQuoteToShipment, rejectQuote, updateQuote } from '@/lib/api/quotes';
+import { confirmQuote, convertQuoteToShipment, fetchQuoteDashboard, rejectQuote, requestQuoteInfo, updateQuote } from '@/lib/api/quotes';
 import { formatCurrency } from '@/src/lib/format';
 import type { Quote } from '@/src/types/logistics';
 
@@ -26,6 +26,9 @@ export function QuotesPage() {
   const [quickView, setQuickView] = useState(() => searchParams.get('view') ?? 'all');
   const [customer, setCustomer] = useState(() => searchParams.get('customer') ?? '');
   const [priority, setPriority] = useState(() => searchParams.get('priority') ?? '');
+  const [transportType, setTransportType] = useState(() => searchParams.get('transport') ?? '');
+  const [origin, setOrigin] = useState(() => searchParams.get('origin') ?? '');
+  const [destination, setDestination] = useState(() => searchParams.get('destination') ?? '');
   const [dateFrom, setDateFrom] = useState(() => searchParams.get('from') ?? '');
   const [dateTo, setDateTo] = useState(() => searchParams.get('to') ?? '');
   const [showCreate, setShowCreate] = useState(false);
@@ -34,6 +37,7 @@ export function QuotesPage() {
   const [submittingAction, setSubmittingAction] = useState(false);
   const [activeAction, setActiveAction] = useState<QuoteAction | null>(null);
   const [activeQuote, setActiveQuote] = useState<Quote | null>(null);
+  const [kpis, setKpis] = useState<{ pending: number; toReview: number; approved: number; converted: number } | null>(null);
   const { notify } = useToast();
 
   useEffect(() => {
@@ -43,6 +47,9 @@ export function QuotesPage() {
     setQuickView(searchParams.get('view') ?? 'all');
     setCustomer(searchParams.get('customer') ?? '');
     setPriority(searchParams.get('priority') ?? '');
+    setTransportType(searchParams.get('transport') ?? '');
+    setOrigin(searchParams.get('origin') ?? '');
+    setDestination(searchParams.get('destination') ?? '');
     setDateFrom(searchParams.get('from') ?? '');
     setDateTo(searchParams.get('to') ?? '');
     if (searchParams.get('create') === '1') {
@@ -56,8 +63,27 @@ export function QuotesPage() {
     search,
     status,
     from: dateFrom,
-    to: dateTo
+    to: dateTo,
+    transportType,
+    origin,
+    destination,
+    client: customer,
+    reference: search
   });
+
+  useEffect(() => {
+    let mounted = true;
+    fetchQuoteDashboard()
+      .then((data) => {
+        if (mounted) setKpis(data);
+      })
+      .catch(() => {
+        if (mounted) setKpis(null);
+      });
+    return () => {
+      mounted = false;
+    };
+  }, [message]);
 
   const getPriority = (quote: Quote): 'low' | 'medium' | 'high' => {
     const amount = quote.finalPrice ?? quote.estimatedPrice ?? 0;
@@ -92,15 +118,18 @@ export function QuotesPage() {
         return haystack.includes(customer.toLowerCase());
       })
       .filter((quote) => (priority ? getPriority(quote) === priority : true))
+      .filter((quote) => (transportType ? quote.transportType === transportType : true))
+      .filter((quote) => (origin ? String(quote.origin || '').toLowerCase().includes(origin.toLowerCase()) : true))
+      .filter((quote) => (destination ? String(quote.destination || '').toLowerCase().includes(destination.toLowerCase()) : true))
       .filter((quote) => {
         if (quickView === 'all') return true;
-        if (quickView === 'pending') return quote.status === 'pending';
-        if (quickView === 'under_review') return quote.status === 'pending' && Boolean(quote.notes);
-        if (quickView === 'approved') return quote.status === 'confirmed';
+        if (quickView === 'pending') return quote.status === 'submitted';
+        if (quickView === 'under_review') return quote.status === 'under_review';
+        if (quickView === 'approved') return ['approved'].includes(quote.status);
         if (quickView === 'rejected') return quote.status === 'rejected';
         return true;
       });
-  }, [items, customer, priority, quickView]);
+  }, [items, customer, priority, transportType, origin, destination, quickView]);
 
   const syncQueryParams = (nextValues: Partial<Record<string, unknown>>) => {
     const merged = {
@@ -112,6 +141,9 @@ export function QuotesPage() {
       priority,
       dateFrom,
       dateTo,
+      transportType,
+      origin,
+      destination,
       ...nextValues
     };
 
@@ -122,6 +154,9 @@ export function QuotesPage() {
       view: merged.quickView && merged.quickView !== 'all' ? merged.quickView : undefined,
       customer: merged.customer || undefined,
       priority: merged.priority || undefined,
+      transport: merged.transportType || undefined,
+      origin: merged.origin || undefined,
+      destination: merged.destination || undefined,
       from: merged.dateFrom || undefined,
       to: merged.dateTo || undefined
     });
@@ -146,7 +181,7 @@ export function QuotesPage() {
   };
 
   const canConvert = (quote: Quote) =>
-    quote.status === 'confirmed' && (!quote.shipmentId || quote.shipmentId === '') && quote.paymentStatus === 'confirmed';
+    ['approved'].includes(quote.status) && (!quote.shipmentId || quote.shipmentId === '');
 
   const handleActionSubmit = async (payload: QuoteActionPayload) => {
     if (!activeAction || !activeQuote) return;
@@ -166,15 +201,15 @@ export function QuotesPage() {
         await updateQuote(activeQuote._id, {
           finalPrice: payload.finalPrice,
           notes: payload.notes,
+          adminNotes: payload.notes,
+          overrideReason: payload.reason || payload.notes || 'Ajustement manuel admin',
         });
         setMessage('Devis mis à jour.');
         notify({ title: 'Devis mis à jour', type: 'success' });
       }
 
       if (activeAction === 'request_info') {
-        await updateQuote(activeQuote._id, {
-          notes: payload.notes || 'Informations complémentaires demandées au client.',
-        });
+        await requestQuoteInfo(activeQuote._id, payload.notes || 'Informations complémentaires demandées au client.');
         setMessage('Demande d\'information enregistrée.');
         notify({ title: 'Demande envoyée', type: 'info' });
       }
@@ -187,7 +222,7 @@ export function QuotesPage() {
 
       if (activeAction === 'convert') {
         if (!canConvert(activeQuote)) {
-          throw new Error('Le devis doit être confirmé et payé avant conversion.');
+          throw new Error('Le devis doit être approuvé/prêt et non encore converti.');
         }
         const result = await convertQuoteToShipment(activeQuote._id);
         const trackingCode = result?.shipment?.trackingCode;
@@ -251,6 +286,9 @@ export function QuotesPage() {
         search={search}
         customer={customer}
         priority={priority}
+        transportType={transportType}
+        origin={origin}
+        destination={destination}
         dateFrom={dateFrom}
         dateTo={dateTo}
         onStatusChange={(value) => {
@@ -283,6 +321,24 @@ export function QuotesPage() {
           setPage(1);
           syncQueryParams({ priority: value, page: 1 });
         }}
+        onTransportTypeChange={(value) => {
+          resetFeedback();
+          setTransportType(value);
+          setPage(1);
+          syncQueryParams({ transportType: value, page: 1 });
+        }}
+        onOriginChange={(value) => {
+          resetFeedback();
+          setOrigin(value);
+          setPage(1);
+          syncQueryParams({ origin: value, page: 1 });
+        }}
+        onDestinationChange={(value) => {
+          resetFeedback();
+          setDestination(value);
+          setPage(1);
+          syncQueryParams({ destination: value, page: 1 });
+        }}
         onDateFromChange={(value) => {
           resetFeedback();
           setDateFrom(value);
@@ -301,6 +357,25 @@ export function QuotesPage() {
         }}
         loading={loading}
       />
+
+      <div className="status-grid" aria-label="Dashboard opérationnel devis">
+        <div className="stat-card">
+          <p>Quotes en attente</p>
+          <strong>{kpis?.pending ?? '—'}</strong>
+        </div>
+        <div className="stat-card">
+          <p>Quotes à revoir</p>
+          <strong>{kpis?.toReview ?? '—'}</strong>
+        </div>
+        <div className="stat-card">
+          <p>Quotes approuvés</p>
+          <strong>{kpis?.approved ?? '—'}</strong>
+        </div>
+        <div className="stat-card">
+          <p>Quotes convertis</p>
+          <strong>{kpis?.converted ?? '—'}</strong>
+        </div>
+      </div>
 
       <QuotesTable
         items={visibleItems}

@@ -1,18 +1,28 @@
-export type QuoteStatus = 'pending' | 'confirmed' | 'rejected' | 'dispatched';
-export type QuotePaymentStatus = 'pending' | 'confirmed' | 'failed';
-export type ShipmentStatus =
+export type QuoteStatus =
   | 'draft'
+  | 'submitted'
+  | 'under_review'
+  | 'info_requested'
+  | 'priced'
+  | 'approved'
+  | 'rejected'
+  | 'expired'
+  | 'converted_to_shipment'
+  | 'cancelled';
+export type QuotePaymentStatus = 'pending' | 'approved' | 'failed';
+export type ShipmentStatus =
   | 'created'
-  | 'pending_dispatch'
-  | 'scheduled'
+  | 'awaiting_pickup'
+  | 'picked_up'
+  | 'at_origin_hub'
   | 'in_transit'
-  | 'delayed'
-  | 'at_hub'
+  | 'at_destination_hub'
   | 'out_for_delivery'
   | 'delivered'
-  | 'failed_delivery'
+  | 'delivery_failed'
   | 'returned'
-  | 'cancelled';
+  | 'cancelled'
+  | 'delayed';
 
 export interface Quote {
   _id: string;
@@ -23,6 +33,9 @@ export interface Quote {
   width?: number;
   height?: number;
   weight?: number;
+  weightActual?: number;
+  weightVolumetric?: number;
+  billableWeight?: number;
   volume?: number;
   status: QuoteStatus;
   provider?: string;
@@ -51,16 +64,46 @@ export interface Quote {
   updatedAt?: string;
   shipmentId?: string;
   trackingNumber?: string;
+  source?: string;
+  priority?: string;
+  adminNotes?: string;
+  reviewNotes?: string;
+  pricingNote?: string;
+  declaredValue?: number;
+  services?: string[];
+  pricingSnapshot?: unknown;
+  pricingBreakdown?: unknown;
+  estimatedDelivery?: string;
+  audit?: { history?: Array<{ action?: string; at?: string; actorLabel?: string; note?: string; fromStatus?: string; toStatus?: string }> };
+  auditLogs?: Array<{ _id?: string; action: string; oldValue?: unknown; newValue?: unknown; comment?: string; userLabel?: string; role?: string; createdAt?: string }>;
   packageTypeId?: { _id: string; name?: string } | string;
 }
 
 export interface Shipment {
   _id: string;
-  quoteId: string;
+  quoteId: string | Quote;
   trackingCode: string;
+  shipmentReference?: string;
+  source?: 'manual' | 'diamarket';
   status: ShipmentStatus;
   origin?: string;
   destination?: string;
+  clientSnapshot?: Record<string, unknown>;
+  originSnapshot?: Record<string, unknown>;
+  destinationSnapshot?: Record<string, unknown>;
+  transportSnapshot?: Record<string, unknown>;
+  packageSnapshot?: Record<string, unknown>;
+  serviceSnapshot?: Record<string, unknown>;
+  pricingSnapshot?: Record<string, unknown>;
+  routeSnapshot?: Record<string, unknown>;
+  priceAccepted?: number;
+  currency?: string;
+  weight?: number;
+  volume?: number;
+  weightActual?: number;
+  weightVolumetric?: number;
+  billableWeight?: number;
+  dimensions?: { length?: number; width?: number; height?: number };
   provider?: string;
   carrier?: string;
   currentLocation?: string;
@@ -68,7 +111,14 @@ export interface Shipment {
   trackingUpdates?: Array<{ eventType?: string; location?: string; status?: ShipmentStatus; note?: string; timestamp?: string; source?: string; actorId?: string; actorLabel?: string; carrierReference?: string }>;
   timeline?: Array<{ eventType?: string; location?: string; status?: ShipmentStatus; note?: string; timestamp?: string; source?: string; actorId?: string; actorLabel?: string; carrierReference?: string }>;
   meta?: {
-    quote?: { origin?: string; destination?: string; estimatedPrice?: number };
+    quote?: { origin?: string; destination?: string; estimatedPrice?: number; transportType?: string; userEmail?: string; recipientContactName?: string };
+    customerEmail?: string;
+    customerName?: string;
+    source?: string;
+    operatorId?: string;
+    hubId?: string;
+    planning?: string;
+    quoteId?: string;
     [key: string]: unknown;
   };
   embarkmentId?: string;
@@ -89,6 +139,22 @@ export interface PricingRule {
   route?: string;
   origin?: string;
   destination?: string;
+  clientSnapshot?: Record<string, unknown>;
+  originSnapshot?: Record<string, unknown>;
+  destinationSnapshot?: Record<string, unknown>;
+  transportSnapshot?: Record<string, unknown>;
+  packageSnapshot?: Record<string, unknown>;
+  serviceSnapshot?: Record<string, unknown>;
+  pricingSnapshot?: Record<string, unknown>;
+  routeSnapshot?: Record<string, unknown>;
+  priceAccepted?: number;
+  currency?: string;
+  weight?: number;
+  volume?: number;
+  weightActual?: number;
+  weightVolumetric?: number;
+  billableWeight?: number;
+  dimensions?: { length?: number; width?: number; height?: number };
   transportType: string;
   transportLineId?: string;
   transportPrices?: Array<{
@@ -96,6 +162,13 @@ export interface PricingRule {
     unitType: string;
     allowedUnits?: string[];
     pricePerUnit?: number;
+    pricePerKg?: number;
+    pricePerM3?: number;
+    flatPrice?: number;
+    minimumPrice?: number;
+    minDelayDays?: number;
+    maxDelayDays?: number;
+    additionalServices?: Record<string, number>;
     dimensionRanges?: Array<{ min?: number; max?: number; price: number; priority?: number }>;
     packagePricing?: Array<{ packageTypeId: string; basePrice: number; name?: string }>;
   }>;
@@ -103,6 +176,13 @@ export interface PricingRule {
   dimensionRanges?: string | { min: number; max: number; price: number }[];
   basePrice?: number;
   pricePerUnit?: number;
+    pricePerKg?: number;
+    pricePerM3?: number;
+    flatPrice?: number;
+    minimumPrice?: number;
+    minDelayDays?: number;
+    maxDelayDays?: number;
+    additionalServices?: Record<string, number>;
   unitType?: string;
   packagePricing?: { packageTypeId: string; basePrice: number }[];
   currency: string;
@@ -188,12 +268,28 @@ export interface AdminAddress {
   createdAt?: string;
 }
 
-export type TransportMode = 'air' | 'sea' | 'road';
+export type TransportMode = 'air' | 'sea' | 'road' | 'express';
 
 export interface TransportLine {
   _id: string;
   origin?: string;
   destination?: string;
+  clientSnapshot?: Record<string, unknown>;
+  originSnapshot?: Record<string, unknown>;
+  destinationSnapshot?: Record<string, unknown>;
+  transportSnapshot?: Record<string, unknown>;
+  packageSnapshot?: Record<string, unknown>;
+  serviceSnapshot?: Record<string, unknown>;
+  pricingSnapshot?: Record<string, unknown>;
+  routeSnapshot?: Record<string, unknown>;
+  priceAccepted?: number;
+  currency?: string;
+  weight?: number;
+  volume?: number;
+  weightActual?: number;
+  weightVolumetric?: number;
+  billableWeight?: number;
+  dimensions?: { length?: number; width?: number; height?: number };
   country?: string;
   location?: string;
   transportType?: TransportMode;
@@ -217,7 +313,7 @@ export interface TransportLine {
   destinationMarketPointId?: MarketPoint | string | null;
 }
 
-export type ExpeditionStatus = 'pending' | 'scheduled' | 'in_transit' | 'delivered' | 'cancelled';
+export type ExpeditionStatus = 'pending' | 'awaiting_pickup' | 'in_transit' | 'delivered' | 'cancelled';
 
 export interface Expedition {
   _id: string;

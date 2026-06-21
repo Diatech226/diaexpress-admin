@@ -3,7 +3,8 @@
 import Link from 'next/link';
 import { Button } from '@/components/ui/button';
 import { Table, TableBody, TableHeader } from '@/components/ui/table';
-import { QuoteStatusBadge } from './QuoteStatusBadge';
+import { QuoteActionMenu } from './QuoteActionMenu';
+import { StatusBadge } from './StatusBadge';
 import { formatCurrency, formatDate, toTitle } from '@/src/lib/format';
 import type { Quote } from '@/src/types/logistics';
 
@@ -42,14 +43,7 @@ export function QuotesTable({
   onRequestNewQuote,
   message,
   actionError,
-  getPriority,
 }: QuotesTableProps) {
-  const canConfirm = (quote: Quote) => quote.status === 'pending';
-  const canConvert = (quote: Quote) =>
-    quote.status === 'confirmed' && quote.paymentStatus === 'confirmed' && !quote.shipmentId;
-  const canReject = (quote: Quote) => quote.status === 'pending' || quote.status === 'confirmed';
-  const canEdit = (quote: Quote) => quote.status === 'pending' || quote.status === 'confirmed';
-
   return (
     <div className="panel">
       <div className="panel__header">
@@ -72,11 +66,13 @@ export function QuotesTable({
             <tr>
               <th>Référence</th>
               <th>Client</th>
-              <th>Itinéraire</th>
-              <th>Priorité</th>
-              <th>Montant</th>
+              <th>Origine</th>
+              <th>Destination</th>
+              <th>Transport</th>
+              <th>Poids</th>
+              <th>Prix estimé</th>
               <th>Statut</th>
-              <th>Dernière MAJ</th>
+              <th>Date</th>
               <th>Actions</th>
             </tr>
           </TableHeader>
@@ -84,7 +80,7 @@ export function QuotesTable({
             {loading ? (
               Array.from({ length: 3 }).map((_, index) => (
                 <tr key={`skeleton-${index}`}>
-                  {Array.from({ length: 8 }).map((_, cellIndex) => (
+                  {Array.from({ length: 10 }).map((_, cellIndex) => (
                     <td key={`skeleton-cell-${cellIndex}`}>
                       <div className="skeleton" style={{ width: `${60 + cellIndex * 3}%` }} />
                     </td>
@@ -93,7 +89,7 @@ export function QuotesTable({
               ))
             ) : items.length === 0 ? (
               <tr>
-                <td colSpan={8}>
+                <td colSpan={10}>
                   <div className="empty-state">Aucun devis trouvé avec ces filtres.</div>
                 </td>
               </tr>
@@ -109,35 +105,29 @@ export function QuotesTable({
                   </td>
                   <td>
                     <div className="cell-stack">
-                      <span>{quote.origin} → {quote.destination}</span>
-                      <span className="muted">{toTitle(quote.transportType)}</span>
+                      <span>{quote.origin}</span>
+                      <span className="muted">{quote.source || quote.provider || 'client'}</span>
                     </div>
                   </td>
+                  <td>{quote.destination}</td>
+                  <td>{toTitle(quote.transportType)}</td>
                   <td>
-                    <span className={`badge ${getPriority(quote) === 'high' ? 'badge--warning' : getPriority(quote) === 'medium' ? 'badge--info' : 'badge--secondary'}`}>
-                      {getPriority(quote) === 'high' ? 'Haute' : getPriority(quote) === 'medium' ? 'Moyenne' : 'Faible'}
-                    </span>
+                    <div className="cell-stack">
+                      <span>{quote.weight ?? quote.billableWeight ?? '—'} kg</span>
+                      <span className="muted">{quote.length ?? '—'} × {quote.width ?? '—'} × {quote.height ?? '—'} cm</span>
+                    </div>
                   </td>
-                  <td>{formatCurrency(quote.finalPrice ?? quote.estimatedPrice, quote.currency)}</td>
+                  <td>{formatCurrency(quote.estimatedPrice, quote.currency)}{quote.finalPrice != null ? <span className="muted"> / final {formatCurrency(quote.finalPrice, quote.currency)}</span> : null}</td>
                   <td>
-                    <QuoteStatusBadge status={quote.status} />
+                    <StatusBadge status={quote.status} />
                   </td>
                   <td>{formatDate(quote.updatedAt || quote.createdAt)}</td>
                   <td>
                     <div className="table-actions">
                       <Link className="button button--ghost" href={`/admin/quotes/${quote._id}`}>
-                        View
+                        Voir détail
                       </Link>
-                      <details className="actions-menu">
-                        <summary className="actions-menu__trigger">⋮</summary>
-                        <div className="actions-menu__panel">
-                          {canEdit(quote) ? <button type="button" onClick={() => onEdit(quote)}>Edit quote</button> : null}
-                          {canConfirm(quote) ? <button type="button" onClick={() => onConfirm(quote)}>Approve</button> : null}
-                          {canReject(quote) ? <button type="button" onClick={() => onReject(quote)}>Reject</button> : null}
-                          <button type="button" onClick={() => onRequestInfo(quote)}>Request info</button>
-                          {canConvert(quote) ? <button type="button" onClick={() => onConvert(quote)}>Convert to shipment</button> : null}
-                        </div>
-                      </details>
+                      <QuoteActionMenu quote={quote} onEdit={onEdit} onConfirm={onConfirm} onReject={onReject} onRequestInfo={onRequestInfo} onConvert={onConvert} />
                     </div>
                   </td>
                 </tr>
